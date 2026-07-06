@@ -1,6 +1,6 @@
 cask "herdwatch" do
   version "0.1.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "9bc14d7e89552742a2eace63276ed01ff2330aabdfd93112345d8b19688ec998"
 
   url "https://github.com/shogoisaji/HerdWatch/releases/download/v0.1.0/HerdWatch-0.1.0.dmg"
   name "HerdWatch"
