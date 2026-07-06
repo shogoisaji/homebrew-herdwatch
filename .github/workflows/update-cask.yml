@@ -1,0 +1,84 @@
+name: Update Cask
+
+on:
+  workflow_dispatch:
+    inputs:
+      cask:
+        description: "Cask name to update"
+        required: true
+        type: string
+      tag:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+        type: string
+      repository:
+        description: "owner/repo hosting the release assets"
+        required: true
+        type: string
+      artifact:
+        description: "DMG artifact filename (e.g. HerdWatch-0.1.0.dmg)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update-cask:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve inputs
+        id: vars
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          [[ "$tag" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo "Invalid tag: $tag"; exit 1; }
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download DMG and compute sha256
+        id: dmg
+        run: |
+          set -euo pipefail
+          url="https://github.com/${{ inputs.repository }}/releases/download/${{ steps.vars.outputs.tag }}/${{ inputs.artifact }}"
+          curl -fsSL -o "$RUNNER_TEMP/dmg" "$url"
+          checksum="$(sha256sum "$RUNNER_TEMP/dmg" | awk '{print $1}')"
+          echo "sha256=$checksum" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Update Cask
+        env:
+          CASK: ${{ inputs.cask }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          SHA256: ${{ steps.dmg.outputs.sha256 }}
+          URL: ${{ steps.dmg.outputs.url }}
+        run: |
+          set -euo pipefail
+          cask_path="Casks/${CASK}.rb"
+          [[ -f "$cask_path" ]] || { echo "Cask not found: $cask_path"; exit 1; }
+          ruby - "$cask_path" <<'RUBY'
+            require "pathname"
+            path = Pathname.new(ARGV[0])
+            text = path.read
+            text.sub!(/^  version ".*?"/, "  version \"#{ENV["VERSION"]}\"")
+            text.sub!(/^  sha256 ".*?"/, "  sha256 \"#{ENV["SHA256"]}\"")
+            text.sub!(/^  url ".*?"/, "  url \"#{ENV["URL"]}\"")
+            path.write(text)
+            puts text
+          RUBY
+
+      - name: Commit and push
+        env:
+          CASK: ${{ inputs.cask }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "Casks/${CASK}.rb"
+          git commit -m "Update ${CASK} to ${VERSION}"
+          git push
