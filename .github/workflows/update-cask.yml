@@ -133,5 +133,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "Casks/${CASK}.rb"
-          git commit -m "Update ${CASK} to ${VERSION}"
-          git push
+          if git diff --cached --quiet; then
+            echo "Cask ${CASK} is already at ${VERSION} — nothing to commit."
+          else
+            git commit -m "Update ${CASK} to ${VERSION}"
+            git push
+          fi
