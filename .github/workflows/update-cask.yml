@@ -172,7 +172,6 @@ jobs:
           BODY
           )" \
             --base main \
-            --head "$branch" \
-            --json url --jq '.url')"
+            --head "$branch")"
 
           echo "Pull request created: $pr_url"
