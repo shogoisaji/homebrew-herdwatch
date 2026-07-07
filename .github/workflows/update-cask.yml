@@ -30,21 +30,74 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve inputs
+      - name: Validate inputs and resolve
         id: vars
+        env:
+          CASK: ${{ inputs.cask }}
+          TAG: ${{ inputs.tag }}
+          REPOSITORY: ${{ inputs.repository }}
+          ARTIFACT: ${{ inputs.artifact }}
+          ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
-          tag="${{ inputs.tag }}"
-          [[ "$tag" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo "Invalid tag: $tag"; exit 1; }
-          version="${tag#v}"
+
+          # --- Actor check: only repo owner can trigger ---
+          repo_owner="${GITHUB_REPOSITORY_OWNER:-}"
+          if [[ "$ACTOR" != "$repo_owner" ]]; then
+            echo "error: actor '$ACTOR' is not authorized. Only '$repo_owner' can trigger this workflow."
+            exit 1
+          fi
+
+          # --- cask: only alphanumeric + hyphen ---
+          if [[ ! "$CASK" =~ ^[a-z0-9-]+$ ]]; then
+            echo "error: invalid cask name: $CASK"
+            exit 1
+          fi
+
+          # --- tag: strict vX.Y.Z format ---
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "error: invalid tag format: $TAG (expected vX.Y.Z)"
+            exit 1
+          fi
+          version="${TAG#v}"
+
+          # --- repository: hardcoded whitelist ---
+          # Only the official HerdWatch repo is allowed.
+          allowed_repos="shogoisaji/HerdWatch"
+          if [[ " $allowed_repos " != *" $REPOSITORY "* ]]; then
+            echo "error: repository '$REPOSITORY' is not in the allowed list: $allowed_repos"
+            exit 1
+          fi
+
+          # --- artifact: strict filename (alphanumeric, dots, dashes) ---
+          if [[ ! "$ARTIFACT" =~ ^[A-Za-z0-9._-]+\.dmg$ ]]; then
+            echo "error: invalid artifact filename: $ARTIFACT"
+            exit 1
+          fi
+
+          # --- artifact must match the tag version ---
+          expected_prefix="HerdWatch-${version}"
+          if [[ "$ARTIFACT" != "${expected_prefix}.dmg" ]]; then
+            echo "error: artifact '$ARTIFACT' does not match version $version (expected ${expected_prefix}.dmg)"
+            exit 1
+          fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "cask=$CASK" >> "$GITHUB_OUTPUT"
 
       - name: Download DMG and compute sha256
         id: dmg
+        env:
+          REPOSITORY: ${{ steps.vars.outputs.repository }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          ARTIFACT: ${{ steps.vars.outputs.artifact }}
         run: |
           set -euo pipefail
-          url="https://github.com/${{ inputs.repository }}/releases/download/${{ steps.vars.outputs.tag }}/${{ inputs.artifact }}"
+          url="https://github.com/${REPOSITORY}/releases/download/${TAG}/${ARTIFACT}"
+          echo "Downloading: $url"
           curl -fsSL -o "$RUNNER_TEMP/dmg" "$url"
           checksum="$(sha256sum "$RUNNER_TEMP/dmg" | awk '{print $1}')"
           echo "sha256=$checksum" >> "$GITHUB_OUTPUT"
@@ -52,7 +105,7 @@ jobs:
 
       - name: Update Cask
         env:
-          CASK: ${{ inputs.cask }}
+          CASK: ${{ steps.vars.outputs.cask }}
           VERSION: ${{ steps.vars.outputs.version }}
           SHA256: ${{ steps.dmg.outputs.sha256 }}
           URL: ${{ steps.dmg.outputs.url }}
@@ -73,7 +126,7 @@ jobs:
 
       - name: Commit and push
         env:
-          CASK: ${{ inputs.cask }}
+          CASK: ${{ steps.vars.outputs.cask }}
           VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
